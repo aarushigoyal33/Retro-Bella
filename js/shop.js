@@ -83,20 +83,86 @@ document.addEventListener('DOMContentLoaded', () => {
     emptyNote.classList.toggle('show', list.length === 0);
   }
 
-  // ---------- add to cart + wishlist hearts (one listener for the whole grid) ----------
-  grid.addEventListener('click', e => {
+  // ---------- Promise feedback toast (appears beside the clicked heart) ----------
+  let wishlistToastTimer;
+
+  // Add toast styles here so this feature does not require changing shop.css.
+  if (!document.getElementById('wishlist-promise-toast-styles')) {
+    const style = document.createElement('style');
+    style.id = 'wishlist-promise-toast-styles';
+    style.textContent = `
+      .wishlist-heart-toast {
+        position: fixed; z-index: 99999; transform: translate(-50%, 0);
+        max-width: min(290px, calc(100vw - 24px)); padding: 10px 14px;
+        border-radius: 8px; color: #fff; font-family: inherit; font-size: 13px; font-weight: 600; line-height: 1.35;
+        text-align: center; box-shadow: 0 5px 18px rgba(0,0,0,.2);
+        opacity: 1; pointer-events: none; transition: opacity .2s ease, transform .2s ease;
+      }
+      .wishlist-heart-toast.is-success { background: #176b45; }
+      .wishlist-heart-toast.is-error { background: #b42318; }
+    `;
+    document.head.appendChild(style);
+  }
+
+  function showWishlistToast(heart, message, type) {
+    document.querySelectorAll('.wishlist-heart-toast').forEach(toast => toast.remove());
+    const toast = document.createElement('div');
+    toast.className = 'wishlist-heart-toast ' + type;
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
+    toast.textContent = message;
+
+    const rect = heart.getBoundingClientRect();
+    const left = Math.max(145, Math.min(window.innerWidth - 145, rect.left + rect.width / 2));
+    const top = Math.max(12, rect.top - 48);
+    toast.style.left = left + 'px';
+    toast.style.top = top + 'px';
+    document.body.appendChild(toast);
+
+    clearTimeout(wishlistToastTimer);
+    wishlistToastTimer = setTimeout(() => {
+      toast.style.opacity = '0';
+      toast.style.transform = 'translate(-50%, 6px)';
+      setTimeout(() => toast.remove(), 220);
+    }, 2000);
+  }
+
+  // ---------- add to cart + Promise-based wishlist hearts ----------
+  grid.addEventListener('click', async e => {
     const card = e.target.closest('.product-card');
     if (!card) return;
-    const product = getProductById(card.dataset.id);
 
+    // Keep the original Add to Cart behaviour unchanged.
     const addButton = e.target.closest('.add-cart-btn');
     if (addButton) {
-      Cart.add(product.id);                        // the header cart count goes up
+      const product = getProductById(card.dataset.id);
+      if (!product) return;
+      Cart.add(product.id);
       addButton.textContent = 'Added ✓';
       setTimeout(() => { addButton.textContent = 'Add to Cart'; }, 1400);
+      return;
     }
 
-    if (e.target.closest('.wishlist-btn')) Wishlist.toggle(product.id);   // hearts update below
+    const heart = e.target.closest('.wishlist-btn');
+    if (!heart) return;
+
+    // Prevent rapid repeated clicks while the Promise is being checked.
+    if (heart.dataset.promisePending === 'true') return;
+    heart.dataset.promisePending = 'true';
+    heart.disabled = true;
+
+    try {
+      const product = await Wishlist.getProductByIdAsync(card.dataset.id);
+      Wishlist.toggle(product.id);
+      // wishlist:updated keeps the heart, header badge and drawer in sync.
+      showWishlistToast(heart, 'Promise succeeded: product found! ♥', 'is-success');
+    } catch (error) {
+      console.error('Wishlist Promise failed:', error);
+      showWishlistToast(heart, 'Promise failed: product not found.', 'is-error');
+    } finally {
+      delete heart.dataset.promisePending;
+      heart.disabled = false;
+    }
   });
 
   // keep every heart in step with the wishlist (also when it changes in the side drawer)
